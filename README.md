@@ -1,162 +1,179 @@
 # toss-next-challenge-solution
-This repository for the 5th Place Model in the Ad Click-Through Rate (CTR) Prediction Competition with toss.
 
-## Setting up environment
+5th place solution for the **toss Ad CTR (Click-Through Rate) Prediction Challenge**.
 
-We use [poetry](https://github.com/python-poetry/poetry) to manage dependencies of repository.
+This repository contains:
+- reproducible training / inference pipelines,
+- multiple model families (boosting + deep CTR models),
+- and the final ensemble recipe used for submission.
 
-Use poetry with version `2.1.1`.
+---
 
-```shell
-$ poetry --version
-Poetry (version 2.1.1)
+## 1) Environment Setup
+
+We manage dependencies with [Poetry](https://python-poetry.org/).
+
+### Requirements
+- Python **3.11.x**
+- Poetry **2.1.1**
+
+```bash
+python --version
+poetry --version
 ```
 
-Python version should be `3.11.x`.
+If your Python version is lower than 3.11, install and switch with `pyenv` (or your preferred version manager), then run:
 
-```shell
-$ python --version
-Python 3.11.11
+```bash
+poetry env use python3.11
+poetry install
 ```
 
-If python version is lower than `3.11`, try installing required version using `pyenv`.
+Optional: inspect the created virtual environment.
 
-Create virtual environment.
-
-```shell
-$ poetry env activate
+```bash
+poetry env info
 ```
 
-If your global python version is not 3.11, run following command.
+---
 
-```shell
-$ poetry env use python3.11
-```
+## 2) Git Hooks (Recommended)
 
-You can check virtual environment path info and its executable python path using following command.
+Enable automatic linting/format checks on commit:
 
-```shell
-$ poetry env info
-```
-
-After setting up python version, just run following command which will install all the required packages from `poetry.lock`.
-
-```shell
-$ poetry install
-```
-
-## Setting up git hook
-
-Set up automatic linting using the following commands:
-```shell
-# This command will ensure linting runs automatically every time you commit code.
+```bash
 poetry run pre-commit install
 ```
 
-### Note
+---
 
-If you want to add package to `pyproject.toml`, please use following command.
+## 3) Dataset Layout
 
-```shell
-$ poetry add "package==1.0.0"
+Place competition files under `input/toss-next-challenge/`:
+
+```text
+input/
+└── toss-next-challenge/
+    ├── train.parquet
+    ├── test.parquet
+    └── sample_submission.csv
 ```
 
-Then, update `poetry.lock` to ensure that repository members share same environment setting.
+---
 
-```shell
-$ poetry lock
+## 4) Quick Start
+
+### Train all key models
+
+```bash
+sh scripts/train.sh
 ```
 
-## Architecture of Our Solution
+What this script runs (high level):
+1. `src/preprocessor.py`
+2. 5-fold training for `dcn` and `dcn_v2` (sequence-aware variants)
+3. LightGBM (DART) training with multiple seeds
+4. XGBoost training
 
-### Ensemble Architecture
+### Run inference + ensemble
+
+```bash
+sh scripts/inference.sh
+```
+
+What this script runs (high level):
+1. `src/preprocessor.py`
+2. 5-fold inference for `dcn` and `dcn_v2`
+3. per-model CV submission generation
+4. LightGBM / XGBoost inference
+5. final blending via `src/ensemble.py`
+
+Final outputs are generated in `output/`.
+
+---
+
+## 5) Solution Architecture
+
+### Ensemble
 
 ![Ensemble](https://github.com/user-attachments/assets/6bba8d01-c5e1-4744-a7d0-0ebd6d38ffcf)
 
-### Boosting
-**LightGBM DART**
+The final submission is a sigmoid-based blend of:
+- LightGBM (DART),
+- XGBoost,
+- sequence-aware DCN,
+- sequence-aware DCN V2.
 
-[Dart](https://arxiv.org/abs/1505.01866) introduces dropout into gradient boosting, randomly dropping trees during training to prevent overfitting and improve generalization.
+### Why LightGBM DART?
 
-We found DART particularly effective for this task because:
-- It handles sparse and high-cardinality categorical features efficiently.
-- It achieves stable validation performance across folds.
-- It generalizes well under data drift and imbalanced conditions.
+[DART](https://arxiv.org/abs/1505.01866) introduces tree dropout during boosting, which helped stabilize generalization in our experiments.
 
-While we also experimented with XGBoost, CatBoost, and Deep Cross Network (DCN),DART consistently served as the backbone model and delivered the highest overall reliability.
-Final submissions were built around DART and refined through ensemble blending with complementary models.
+Observed strengths for this task:
+- robust behavior on sparse / high-cardinality features,
+- stable CV trends across folds,
+- good resilience under shift / imbalance.
 
-### Deep Cross Network Architecture
+### Seq-aware DCN family
 
-**Seq-aware DCN**
-
-[DCN](https://arxiv.org/abs/1708.05123) with MHA encoded seq feature.
+- [DCN](https://arxiv.org/abs/1708.05123) + sequence encoding (MHA)
+- [DCN V2](https://arxiv.org/abs/2008.13535) + sequence encoding (MHA)
 
 ![Seq-aware DCN](https://github.com/user-attachments/assets/44bfb186-313c-401c-80f5-d1a0eb6f9c37)
 
-**Seq-aware DCN V2**
-
-[DCN V2](https://arxiv.org/abs/2008.13535) with MHA encoded seq feature.
-
 ![Seq-aware DCN V2](https://github.com/user-attachments/assets/4ae3802d-1e89-4763-892f-830a9634e8be)
 
+---
 
-## Implemented models
+## 6) Implemented Models and Results
 
-| Model           |CV Score| Public LB | Private LB | Chosen for Ensemble |
-|-----------------|--------|-----------|------------|---------------------|
-| Sigmoid Ensemble| - | **0.35126** | **0.35073** | FINAL |
-| LightGBM        | 0.35501 | 0.35024 | 0.34960 | O |
-| XGBoost         | 0.35489 | 0.34788 |	0.34757| O |
-| dcn_v2_seq      | 0.35375 | 0.34471 | 0.34452 | O |
-| dcn_seq         | 0.35345 | 0.34645 | 0.34602 | O |
-| CatBoost        | 0.34348 | 0.34804  | 0.34790  | X |
-| dcn_v2          | 0.35395 | 0.34512  | NA  | X |
-| dcn             | | 0.34709  | 0.346708  | X |
-| ffm_seq         | | NA  | NA  | X |
-| ffm             | | 0.34579  | 0.34565  | X |
-| xdeepfm_seq     | | NA  | NA  | X |
-| xdeepfm         | 0.34861 | 0.34321  | NA  | X |
-| deepfm_seq      | 0.35219 | 0.34497  | NA  | X |
-| deepfm          | | NA  | NA  | X |
-| fm_seq          | | NA  | NA  | X |
-| fm              | | NA  | NA  | X |
-| fibinet         | | NA  | NA  | X |
+| Model | CV Score | Public LB | Private LB | Used in Final Ensemble |
+|---|---:|---:|---:|:---:|
+| Sigmoid Ensemble | - | **0.35126** | **0.35073** | ✅ |
+| LightGBM | 0.35501 | 0.35024 | 0.34960 | ✅ |
+| XGBoost | 0.35489 | 0.34788 | 0.34757 | ✅ |
+| dcn_v2_seq | 0.35375 | 0.34471 | 0.34452 | ✅ |
+| dcn_seq | 0.35345 | 0.34645 | 0.34602 | ✅ |
+| CatBoost | 0.34348 | 0.34804 | 0.34790 | ❌ |
+| dcn_v2 | 0.35395 | 0.34512 | NA | ❌ |
+| dcn | - | 0.34709 | 0.346708 | ❌ |
+| ffm_seq | - | NA | NA | ❌ |
+| ffm | - | 0.34579 | 0.34565 | ❌ |
+| xdeepfm_seq | - | NA | NA | ❌ |
+| xdeepfm | 0.34861 | 0.34321 | NA | ❌ |
+| deepfm_seq | 0.35219 | 0.34497 | NA | ❌ |
+| deepfm | - | NA | NA | ❌ |
+| fm_seq | - | NA | NA | ❌ |
+| fm | - | NA | NA | ❌ |
+| fibinet | - | NA | NA | ❌ |
 
+---
 
-### Experiment Configurations
+## 7) Main Config Files
 
-| Model         | Config Path |
-|---------------|-------------|
-| LightGBM      | [config/models/lightgbm.yaml](https://github.com/ds-wook/toss-next-challenge-solution/blob/main/config/models/lightgbm.yaml) |
-| XGBoost       | [config/models/xgboost.yaml](https://github.com/ds-wook/toss-next-challenge-solution/blob/main/config/models/xgboost.yaml) |
-| CatBoost      | [config/models/catboost.yaml](https://github.com/ds-wook/toss-next-challenge-solution/blob/main/config/models/catboost.yaml) |
-| All FM Models | [config/models/fm.yaml](https://github.com/ds-wook/toss-next-challenge-solution/blob/main/config/models/fm.yaml) |
+| Model Family | Config |
+|---|---|
+| LightGBM | `config/models/lightgbm.yaml` |
+| XGBoost | `config/models/xgboost.yaml` |
+| CatBoost | `config/models/catboost.yaml` |
+| FM-based models | `config/models/fm.yaml` |
+| Final blend | `config/blends/total.yaml` |
 
+---
 
-## How to Run Our Solution
-### 1. Prepare the input data
-Place the following files inside the `input/toss-next-challenge/` directory:
+## 8) Reproducibility Notes
+
+- Keep `poetry.lock` committed for deterministic environments.
+- When adding a dependency:
+
+```bash
+poetry add "package==x.y.z"
+poetry lock
 ```
-├── input
-   └── toss-next-challenge
-       ├── sample_submission.csv
-       ├── test.parquet
-       └── train.parquet
-```
 
-### 2. Run the following script:
-- train
-    ```shell
-    $ sh scripts/train.sh
-    ```
+- Prefer running provided scripts (`train.sh`, `inference.sh`) for end-to-end consistency.
 
-- inference
+---
 
-    ```shell
-    $ sh scripts/inference.sh
-    ```
+## 9) License
 
-### 3. The final submission file will be generated in the output folder as
-- `tree4-dcn2-mha-concatmod-sigmoid-ensemble.csv` is final submission.
-- Please use this CSV file for evaluation.
+This project is licensed under the terms in [LICENSE](./LICENSE).
